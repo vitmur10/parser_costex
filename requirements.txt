@@ -1,3 +1,15 @@
-openpyxl
-pandas
-selenium
+# --- Core ---
+python-dotenv>=1.0.0
+
+# --- Playwright ---
+playwright>=1.41.0
+
+# --- Selenium (поки не прибереш повністю) ---
+selenium>=4.16.0
+
+# --- Excel / data ---
+pandas>=2.1.0
+openpyxl>=3.1.2
+
+# --- Utils ---
+requests>=2.31.0
