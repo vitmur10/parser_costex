@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from config import DEBUG
 import random
 import time
 from datetime import datetime
@@ -12,6 +12,8 @@ from playwright.sync_api import Page, TimeoutError as PWTimeoutError
 # Debug helpers
 # -------------------------
 def dbg_dump(page: Page, tag: str, out_dir: str = "dbg"):
+    if not DEBUG:
+        return
     try:
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

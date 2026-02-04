@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from debug_utils import dbg_dump, debug
 from playwright.sync_api import Page, TimeoutError as PWTimeoutError
 import time
 import re
@@ -54,23 +54,7 @@ def dbg_state(page: Page, tag: str):
     print(f"DEBUG[{tag}] url={page.url}")
 
 
-def dbg_dump(page: Page, tag: str, out_dir: str = "dbg"):
-    try:
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        png = Path(out_dir) / f"dbg_{tag}_{ts}.png"
-        html = Path(out_dir) / f"dbg_{tag}_{ts}.html"
-        try:
-            page.screenshot(path=str(png), full_page=True)
-        except Exception:
-            pass
-        try:
-            html.write_text(page.content(), encoding="utf-8")
-        except Exception:
-            pass
-        print(f"[DBG] saved: {html} | {png}")
-    except Exception:
-        pass
+
 
 
 def close_modal_if_present(page: Page):

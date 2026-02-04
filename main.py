@@ -11,7 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
+from debug_utils import dbg_dump, debug
 from playwright.sync_api import sync_playwright, Page
 
 import category as cat
@@ -175,36 +175,8 @@ def attach_page_tracing(page: Page, variant: str):
         page.on("response", on_response)
 
 
-# =========================
-# Debug dump
-# =========================
 
-def dbg_dump(page: Page, tag: str, out_dir: Path):
-    """
-    DBG завжди містить URL + title, а також html/png.
-    """
-    try:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        html = out_dir / f"dbg_{tag}_{ts}.html"
-        png = out_dir / f"dbg_{tag}_{ts}.png"
 
-        cur_url = _safe_page_url(page)
-        cur_title = _safe_page_title(page)
-
-        try:
-            page.screenshot(path=str(png), full_page=True)
-        except Exception:
-            pass
-        try:
-            html.write_text(page.content(), encoding="utf-8")
-        except Exception:
-            pass
-
-        logger.warning("DBG url=%s title=%r", cur_url, cur_title)
-        logger.warning("DBG saved: %s | %s", str(html), str(png))
-    except Exception:
-        pass
 
 
 # =========================
@@ -724,7 +696,7 @@ def run_full_pipeline(
 if __name__ == "__main__":
     run_full_pipeline(
         limit_subcategories=2,
-        limit_parts_detail=5,
+        limit_parts_detail=2,
         sniff_seconds=20,
         headless_subcategories=True,
         headless_products=True,

@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from debug_utils import dbg_dump, debug
 import csv
 import random
 import time
@@ -20,19 +20,6 @@ def human_sleep(page: Page, a=1.2, b=3.5):
     page.wait_for_timeout(int(random.uniform(a, b) * 1000))
 
 
-def dbg_dump(page: Page, tag: str, out_dir: str = "dbg"):
-    """Зберігає html + скрін для діагностики."""
-    try:
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        html_path = Path(out_dir) / f"dbg_{tag}_{ts}.html"
-        png_path = Path(out_dir) / f"dbg_{tag}_{ts}.png"
-
-        html_path.write_text(page.content(), encoding="utf-8")
-        page.screenshot(path=str(png_path), full_page=True)
-        print(f"[DBG] saved: {html_path} | {png_path}")
-    except Exception as e:
-        print(f"[DBG] dump failed: {e}")
 
 
 def make_page(p, headless: bool, variant: str = "stealth") -> tuple:

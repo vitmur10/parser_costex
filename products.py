@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from debug_utils import dbg_dump, debug
 import csv
 import json
 import os
@@ -14,28 +14,6 @@ from playwright.sync_api import sync_playwright, Page
 
 from config import USER_AGENTS
 
-
-# =========================
-# Debug helpers
-# =========================
-
-def dbg_dump(page: Page, tag: str, out_dir: str = "dbg"):
-    try:
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        html_path = Path(out_dir) / f"dbg_{tag}_{ts}.html"
-        png_path = Path(out_dir) / f"dbg_{tag}_{ts}.png"
-        try:
-            html_path.write_text(page.content(), encoding="utf-8")
-        except Exception:
-            pass
-        try:
-            page.screenshot(path=str(png_path), full_page=True)
-        except Exception:
-            pass
-        print(f"[DBG] saved: {html_path} | {png_path}")
-    except Exception as e:
-        print(f"[DBG] dump failed: {e}")
 
 
 # =========================
