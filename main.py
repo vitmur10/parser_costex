@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 import random
@@ -68,6 +69,53 @@ def setup_logging(
 
 
 logger = setup_logging()
+
+
+# =========================
+# Incremental Stage4 storage
+# =========================
+
+def _jsonl_append(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Append rows to JSONL (one JSON dict per line)."""
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for r in rows:
+            try:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            except Exception:
+                # as a fallback, stringify everything
+                safe = {k: str(v) for k, v in (r or {}).items()}
+                f.write(json.dumps(safe, ensure_ascii=False) + "\n")
+
+
+def _jsonl_load(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    out.append(obj)
+            except Exception:
+                continue
+    return out
+
+
+def _jsonl_processed_partnos(path: Path) -> set[str]:
+    """Used for resume: if a part_no has already been written, we can skip it."""
+    done: set[str] = set()
+    for r in _jsonl_load(path):
+        p = str(r.get("part_no") or "").strip()
+        if p:
+            done.add(p)
+    return done
 
 
 # =========================
@@ -357,13 +405,19 @@ def login_with_retries(
             browser, context, page = create_browser_and_page(p, variant, headless_default)
 
             logger.info("Login... (target=%s)", URL_LOGIN)
-            # ✅ UPDATED CALL: pass username/password
-            login(
-                page,
-                URL_LOGIN,
-                username=CREDENTIALS["login"],
-                password=CREDENTIALS["password"],
-            )
+            # authorization.login може мати різний підпис залежно від твоєї версії файлу:
+            #   login(page, url)
+            #   login(page, url, username, password) або з keyword args
+            try:
+                login(
+                    page,
+                    URL_LOGIN,
+                    username=CREDENTIALS["login"],
+                    password=CREDENTIALS["password"],
+                )
+            except TypeError:
+                # fallback: старий підпис без username/password
+                login(page, URL_LOGIN)
 
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -472,9 +526,13 @@ def run_stage4_with_variants(
 ) -> list[dict[str, Any]]:
     last_err = None
 
+    # incremental file (so we don't lose progress if the run crashes)
+    partial_path = out_dir / "stage4_partial.jsonl"
+    resume = os.getenv("RESUME_STAGE4", "1").strip().lower() not in ("0", "false", "no")
+
     for variant in variants:
         logger.info("Stage 4 attempt: variant=%s headless_default=%s", variant, headless_default)
-        results: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []  # still kept for final return, but we also write to JSONL
 
         with sync_playwright() as p:
             browser = None
@@ -493,8 +551,17 @@ def run_stage4_with_variants(
                 go_to_price_inquiry(page)
                 logger.info("After go_to_price_inquiry: url=%s title=%r", _safe_page_url(page), _safe_page_title(page))
 
+                processed = _jsonl_processed_partnos(partial_path) if resume else set()
+                if processed:
+                    logger.info("Stage 4 resume enabled. already_processed_parts=%s", len(processed))
+
                 for idx, item in enumerate(iter_parts_from_csv(str(products_csv), limit=limit_parts_detail), start=1):
                     part_no = item["part_no"]
+
+                    if resume and part_no in processed:
+                        logger.info("Skip already processed part_no=%s", part_no)
+                        continue
+
                     logger.info("Detail [%s] variant=%s part_no=%s url=%s", idx, variant, part_no, _safe_page_url(page))
 
                     fill_price_inquiry_form(page, part_number=part_no)
@@ -503,15 +570,22 @@ def run_stage4_with_variants(
                     price_data = open_detail_update_qty_and_collect(page)
                     logger.info("After collect: url=%s", _safe_page_url(page))
 
-                    results.extend(normalize_price_rows(item, price_data))
+                    new_rows = normalize_price_rows(item, price_data)
+                    results.extend(new_rows)
+
+                    # ✅ incremental save after each part
+                    _jsonl_append(partial_path, new_rows)
+                    processed.add(part_no)
 
                 try:
                     browser.close()
                 except Exception:
                     pass
 
-                logger.info("Stage 4 success: variant=%s rows=%s", variant, len(results))
-                return results
+                # Prefer JSONL as the source of truth (includes everything saved incrementally)
+                all_rows = _jsonl_load(partial_path)
+                logger.info("Stage 4 success: variant=%s rows_in_memory=%s rows_in_jsonl=%s", variant, len(results), len(all_rows))
+                return all_rows or results
 
             except Exception as e:
                 last_err = e
@@ -612,6 +686,22 @@ def run_full_pipeline(
         variants = ["stealth", "basic", "headed"]
 
     logger.info("Stage 4: detail parsing variants=%s limit_parts=%s", variants, limit_parts_detail)
+
+    # Якщо хочеш стартувати Stage 4 з нуля (не резюмити), постав:
+    #   RESUME_STAGE4=0  або  CLEAR_STAGE4=1
+    partial_path = OUT_DIR / "stage4_partial.jsonl"
+    if os.getenv("CLEAR_STAGE4", "0").strip().lower() in ("1", "true", "yes"):
+        try:
+            partial_path.unlink(missing_ok=True)
+            logger.info("Stage 4 partial cleared: %s", str(partial_path))
+        except Exception:
+            pass
+    elif os.getenv("RESUME_STAGE4", "1").strip().lower() in ("0", "false", "no"):
+        try:
+            partial_path.unlink(missing_ok=True)
+            logger.info("Stage 4 resume disabled -> partial cleared: %s", str(partial_path))
+        except Exception:
+            pass
 
     results = run_stage4_with_variants(
         products_csv=products_csv,
