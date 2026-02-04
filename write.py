@@ -9,6 +9,8 @@ from typing import Any, Iterable
 
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
+
+
 def dedupe_results(rows: list[dict]) -> list[dict]:
     """
     Прибирає дублікати.
@@ -22,14 +24,15 @@ def dedupe_results(rows: list[dict]) -> list[dict]:
         loc = str(r.get("Location") or "").strip()
 
         if loc:
-            key = (part_no, loc)     # modal rows
+            key = (part_no, loc)  # modal rows
         else:
-            key = (part_no, None)    # detail row
+            key = (part_no, None)  # detail row
 
         # last wins
         seen[key] = r
 
     return list(seen.values())
+
 
 def save_costex_results_xlsx(
     rows: list[dict[str, Any]],
@@ -38,13 +41,11 @@ def save_costex_results_xlsx(
     latest_name: str = "costex_catalog_latest.xlsx",
 ) -> tuple[Path, Path]:
     """
-    Записує результати у два файли:
-      - costex_catalog_latest.xlsx (для імпорту)
-      - costex_catalog_YYYYMMDD.xlsx (історія)
-    Старі costex_catalog_*.xlsx (окрім цих двох поточних) переносить у /archive.
-
-    Повертає (latest_path, dated_path).
+    Записує результати у два XLSX файли з ФІКСОВАНОЮ структурою колонок:
+    Reference | Product Name | Retail Price Tax Exc | Quantity | Images | Features |
+    Width | Height | Depth | Weight | Default Category | Categories
     """
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -57,8 +58,7 @@ def save_costex_results_xlsx(
     latest_path = out_dir / latest_name
     dated_path = out_dir / dated_name
 
-    # 1) Переносимо старі файли в archive (крім тих, що зараз будемо перезаписувати)
-    #    Патерн: costex_catalog_*.xlsx
+    # ---------- ARCHIVE OLD FILES ----------
     pat = re.compile(r"^costex_catalog_.*\.xlsx$", re.IGNORECASE)
     keep = {latest_path.name.lower(), dated_path.name.lower()}
 
@@ -71,55 +71,63 @@ def save_costex_results_xlsx(
             continue
 
         dest = archive_dir / p.name
-        # якщо в archive вже є файл з такою назвою — додамо суфікс часу
         if dest.exists():
             ts = datetime.now().strftime("%H%M%S")
             dest = archive_dir / f"{p.stem}_{ts}{p.suffix}"
 
         shutil.move(str(p), str(dest))
 
-    # 2) Записуємо XLSX (і latest, і dated) з однаковим вмістом
+    # ---------- FIXED STRUCTURE ----------
+    headers = [
+        "Reference",
+        "Product Name",
+        "Retail Price Tax Exc",
+        "Quantity",
+        "Images",
+        "Features",
+        "Width",
+        "Height",
+        "Depth",
+        "Weight",
+        "Default Category",
+        "Categories",
+    ]
+
+    field_map = {
+        "Reference": "part_no",
+        "Product Name": "Title",
+        "Retail Price Tax Exc": "Unit Price",
+        "Quantity": "Qty Available",
+        "Images": "Image URL",
+        "Features": "Features",
+        "Width": "Width",
+        "Height": "Height",
+        "Depth": "Depth",
+        "Weight": "Lbs",
+        "Default Category": "Category",
+        "Categories": "Categories",
+    }
+
     def _write_xlsx(path: Path) -> None:
         wb = Workbook()
         ws = wb.active
         ws.title = "catalog"
 
-        # Заголовки = об’єднання всіх ключів (стабільно: спершу стандартні, потім інші)
-        preferred = [
-            "category_url",
-            "subcategory_name",
-            "subcategory_url",
-            "part_no",
-            "mode",
-            "Location",
-            "Unit Price",
-            "Tot Price",
-            "List Price",
-            "Lbs",
-            "Kgs",
-            "Vol (ft3)",
-            "Vol (cm3)",
-        ]
-        all_keys = set()
-        for r in rows:
-            all_keys.update(r.keys())
-
-        headers = [k for k in preferred if k in all_keys] + sorted([k for k in all_keys if k not in preferred])
-
-        # Пишемо header
+        # header
         ws.append(headers)
 
-        # Пишемо рядки
+        # rows
         for r in rows:
-            ws.append([r.get(h, "") for h in headers])
+            ws.append([
+                r.get(field_map[h], "") for h in headers
+            ])
 
-        # Авто-ширина колонок (простий варіант)
+        # auto width
         for col_idx, header in enumerate(headers, start=1):
-            max_len = len(str(header))
+            max_len = len(header)
             for cell in ws[get_column_letter(col_idx)]:
-                if cell.value is None:
-                    continue
-                max_len = max(max_len, len(str(cell.value)))
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
             ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 2, 60)
 
         wb.save(path)

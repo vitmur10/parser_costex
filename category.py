@@ -1,172 +1,294 @@
+from __future__ import annotations
+
 import csv
 import random
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeoutError
+import time
+from pathlib import Path
+from datetime import datetime
+from urllib.parse import urlparse
 
-from config import BASE_URL, SELECTOR
+from playwright.sync_api import sync_playwright, Page
+
+from config import BASE_URL, USER_AGENTS
 
 
-def human_sleep(page, a=1.2, b=3.5):
-    """Рандомна затримка як у людини"""
+# =========================
+# Utils
+# =========================
+
+def human_sleep(page: Page, a=1.2, b=3.5):
     page.wait_for_timeout(int(random.uniform(a, b) * 1000))
 
 
-def _as_class_selector(value: str) -> str:
+def dbg_dump(page: Page, tag: str, out_dir: str = "dbg"):
+    """Зберігає html + скрін для діагностики."""
+    try:
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        html_path = Path(out_dir) / f"dbg_{tag}_{ts}.html"
+        png_path = Path(out_dir) / f"dbg_{tag}_{ts}.png"
+
+        html_path.write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(png_path), full_page=True)
+        print(f"[DBG] saved: {html_path} | {png_path}")
+    except Exception as e:
+        print(f"[DBG] dump failed: {e}")
+
+
+def make_page(p, headless: bool, variant: str = "stealth") -> tuple:
     """
-    У Selenium ти використовував By.CLASS_NAME.
-    Тут робимо CSS селектор класу. Якщо раптом у конфігу передадуть не клас —
-    залишимо як є (як CSS).
+    variant:
+      - "basic": мінімум
+      - "stealth": UA/headers/locale/tz + anti-webdriver
+      - "headed": headless=False, але з тими ж налаштуваннями
     """
-    v = (value or "").strip()
-    if not v:
-        return v
-    # якщо вже css (містить . # [ : пробіл) — не чіпаємо
-    if any(ch in v for ch in [".", "#", "[", ":", " "]):
-        return v
-    return f".{v}"
+    channel = "chrome"  # ← дуже часто стабілізує headless
+    args = [
+        "--disable-blink-features=AutomationControlled",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+    ]
+
+    if variant == "headed":
+        headless = False
+
+    browser = p.chromium.launch(headless=headless, channel=channel, args=args)
+
+    ua = random.choice(USER_AGENTS) if USER_AGENTS else None
+
+    context = browser.new_context(
+        user_agent=ua,
+        viewport={"width": 1920, "height": 1080},
+        locale="en-US",
+        timezone_id="Europe/Kyiv",
+        extra_http_headers={
+            "Accept-Language": "en-US,en;q=0.9,uk;q=0.8",
+        },
+    )
+
+    if variant in ("stealth", "headed"):
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+        )
+
+    page = context.new_page()
+    # трохи більші таймаути — headless часто повільніше дорендерює
+    page.set_default_timeout(30_000)
+    page.set_default_navigation_timeout(45_000)
+
+    return browser, context, page
 
 
-def parser_category(out_path="categories.csv", url=None, headless=False):
-    """
-    Йде на BASE_URL + "ctp-products/" і збирає посилання категорій.
-    Зберігає у categories.csv (колонка url).
-    """
-    url = url or (BASE_URL + "ctp-products/")
-
-    category_sel = _as_class_selector(SELECTOR.get("category_path"))
-
-    category_list = []
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        page = browser.new_page()
-
-        page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        human_sleep(page, 1.5, 3.0)
-
-        # Selenium: driver.find_elements(By.CLASS_NAME, SELECTOR["category_path"])
-        categories = page.locator(category_sel)
-        count = categories.count()
-
-        for i in range(count):
-            block = categories.nth(i)
+def goto_with_retry(page: Page, url: str, tries: int = 3):
+    last = None
+    for i in range(1, tries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
             try:
-                # як у тебе: img[width='257'] + a[href]
-                img = block.locator("img[width='257']").first
-                a = block.locator("a").first
-
-                # якщо картинки нема — пропускаємо (як у Selenium try/except)
-                if img.count() == 0 or a.count() == 0:
-                    continue
-
-                href = (a.get_attribute("href") or "").strip()
-                if href:
-                    category_list.append({"url": href})
+                page.wait_for_load_state("networkidle", timeout=25_000)
             except Exception:
                 pass
-
-        # write csv
-        with open(out_path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["url"])
-            writer.writeheader()
-            writer.writerows(category_list)
-
-        browser.close()
-
-    return category_list
+            return
+        except Exception as e:
+            last = e
+            print(f"[WARN] goto failed try={i}/{tries}: {e}")
+            time.sleep(1.0)
+    raise last
 
 
-def parser_subcategory(csv_path="categories.csv", out_path="subcategories.csv", headless=False):
+def scroll_until_loaded(page: Page, locator_css: str, max_rounds: int = 12):
     """
-    Читає categories.csv (колонка url),
-    для кожної категорії парсить підкатегорії:
-      - category_url
-      - subcategory_name
-      - subcategory_url
-    Зберігає в subcategories.csv
+    Скролить вниз, доки кількість елементів не перестане зростати.
+    Це майже завжди потрібно для Elementor listing у headless.
     """
-    subcategory_sel = _as_class_selector(SELECTOR.get("subcategory"))
+    prev = -1
+    stable_rounds = 0
 
-    subcategory_list = []
+    for _ in range(max_rounds):
+        count = page.locator(locator_css).count()
 
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+        if count == prev:
+            stable_rounds += 1
+        else:
+            stable_rounds = 0
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=headless)
-            context = browser.new_context()
+        if stable_rounds >= 2:  # двічі підряд без росту — вважаємо завантаженим
+            break
 
-            for row in reader:
-                category_url = (row.get("url") or "").strip()
-                if not category_url:
-                    continue
+        prev = count
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        page.wait_for_timeout(800)
+
+    # повернемось нагору (іноді після цього елементи стають visible стабільніше)
+    try:
+        page.evaluate("window.scrollTo(0, 0)")
+        page.wait_for_timeout(300)
+    except Exception:
+        pass
 
 
-                # як у Selenium: кожне посилання — в окремому драйвері
-                page = context.new_page()
+# =========================
+# Category / Subcategory
+# =========================
 
+def parser_category(out_path="categories.csv", url=None, headless=False, variant="stealth"):
+    url = url or (BASE_URL + "ctp-products/")
+    category_list = []
+    seen = set()
+
+    def normalize_costex_url(href: str) -> str | None:
+        if not href:
+            return None
+        href = href.strip()
+
+        if href.startswith(("mailto:", "tel:", "javascript:")) or href.startswith("#"):
+            return None
+
+        parsed = urlparse(href)
+
+        if not parsed.netloc:
+            if href.startswith("/"):
+                href = "https://www.costex.com" + href
+                parsed = urlparse(href)
+            else:
+                return None
+
+        host = parsed.netloc.lower()
+        if host not in ("www.costex.com", "costex.com"):
+            return None
+
+        path = parsed.path or "/"
+        if path in ("/", "/ctp-products/", "/ctp-products"):
+            return None
+
+        parts = [p for p in path.split("/") if p]
+        if len(parts) != 1:
+            return None
+
+        slug = parts[0].strip()
+        if not slug:
+            return None
+
+        return f"https://www.costex.com/{slug}/"
+
+    with sync_playwright() as p:
+        browser, context, page = make_page(p, headless=headless, variant=variant)
+
+        try:
+            goto_with_retry(page, url, tries=3)
+            human_sleep(page, 1.0, 2.0)
+
+            links = page.locator("a[href]")
+            count = links.count()
+
+            for i in range(count):
                 try:
-                    human_sleep(page, 2.0, 5.0)
-                    page.goto(category_url, wait_until="domcontentloaded", timeout=60000)
-                    human_sleep(page, 1.5, 3.0)
-
-                    # Selenium: driver.find_elements(By.CLASS_NAME, SELECTOR["subcategory"])
-                    blocks = page.locator(subcategory_sel)
-                    bcount = blocks.count()
-
-                    for bi in range(bcount):
-                        block = blocks.nth(bi)
-                        # Selenium: subcategory.find_elements(By.CSS_SELECTOR, "li")
-                        lis = block.locator("li")
-                        licount = lis.count()
-
-                        for li_i in range(licount):
-                            li = lis.nth(li_i)
-                            human_sleep(page, 0.2, 0.8)
-
-                            try:
-                                a = li.locator("a").first
-                                link = (a.get_attribute("href") or "").strip()
-                                name = (li.inner_text() or "").strip()
-
-                                if link:
-                                    subcategory_list.append(
-                                        {
-                                            "category_url": category_url,
-                                            "subcategory_name": name,
-                                            "subcategory_url": link,
-                                        }
-                                    )
-                            except Exception:
-                                pass
-
-                except PWTimeoutError as e:
-                    pass
-                except Exception as e:
-                    pass
-                finally:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
-
-                    # пауза між сесіями (як у Selenium driver.quit + sleep)
-                    # робимо її після закриття сторінки
-                    # (щоб не роздувати контекст)
-                    # 3..6 сек
-                    # (пауза на context рівні, але ок)
-                    # якщо хочеш — можна зменшити
+                    a = links.nth(i)
+                    href = (a.get_attribute("href") or "").strip()
+                    clean = normalize_costex_url(href)
+                    if not clean or clean in seen:
+                        continue
+                    seen.add(clean)
+                    category_list.append({"url": clean})
+                except Exception:
                     pass
 
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["url"])
+                writer.writeheader()
+                writer.writerows(category_list)
+
+            return category_list
+
+        except Exception:
+            dbg_dump(page, "categories", out_dir="dbg")
+            raise
+        finally:
             browser.close()
 
-    # write csv
-    with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(
-            f, fieldnames=["category_url", "subcategory_name", "subcategory_url"]
-        )
-        writer.writeheader()
-        writer.writerows(subcategory_list)
 
-    return subcategory_list
+def parser_subcategory(csv_path="categories.csv", out_path="subcategories.csv", headless=False, variant="stealth"):
+    """
+    Парсить підкатегорії з:
+      https://www.costex.com/full-product-listing/
+    """
+    listing_url = BASE_URL + "full-product-listing/"
+
+    subcategory_list = []
+    seen = set()
+
+    article_sel = "article.elementor-post.ctp-categories[role='listitem']"
+    thumb_link_sel = "a.elementor-post__thumbnail__link"
+    title_link_sel = "h3.elementor-post__title a"
+
+    with sync_playwright() as p:
+        browser, context, page = make_page(p, headless=headless, variant=variant)
+
+        try:
+            goto_with_retry(page, listing_url, tries=3)
+            human_sleep(page, 1.0, 2.0)
+
+            # 1) дочекаємось появи хоча б одного article у DOM
+            try:
+                page.wait_for_selector(article_sel, timeout=25_000, state="attached")
+            except Exception:
+                dbg_dump(page, "subcats_no_articles", out_dir="dbg")
+                raise
+
+            # 2) скролимо, щоб Elementor догрузив все (або максимум що встигає)
+            scroll_until_loaded(page, article_sel)
+
+            articles = page.locator(article_sel)
+            count = articles.count()
+            if count == 0:
+                dbg_dump(page, "subcats_count0", out_dir="dbg")
+                raise RuntimeError("No subcategory articles found (count=0). Possibly blocked or different DOM in headless.")
+
+            for i in range(count):
+                art = articles.nth(i)
+                try:
+                    href = ""
+                    a_thumb = art.locator(thumb_link_sel).first
+                    if a_thumb.count():
+                        href = (a_thumb.get_attribute("href") or "").strip()
+
+                    if not href:
+                        a_title = art.locator(title_link_sel).first
+                        if a_title.count():
+                            href = (a_title.get_attribute("href") or "").strip()
+
+                    if not href or href in seen:
+                        continue
+                    seen.add(href)
+
+                    name = ""
+                    a_title = art.locator(title_link_sel).first
+                    if a_title.count():
+                        name = (a_title.inner_text() or "").strip()
+
+                    subcategory_list.append(
+                        {
+                            "subcategory_name": name,
+                            "subcategory_url": href,
+                        }
+                    )
+                except Exception:
+                    pass
+
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=["subcategory_name", "subcategory_url"])
+                writer.writeheader()
+                writer.writerows(subcategory_list)
+
+            return subcategory_list
+
+        except Exception:
+            dbg_dump(page, "subcats_failed", out_dir="dbg")
+            raise
+        finally:
+            browser.close()
 
 
+# Нема автозапуску тут.
+# Запускай з main.py або вручну:
+# parser_subcategory(headless=True, variant="stealth")
