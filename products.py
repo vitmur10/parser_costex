@@ -396,17 +396,15 @@ def run_from_input_csv(
         writer = csv.DictWriter(f_out, fieldnames=fieldnames)
         writer.writeheader()
 
-    with open(input_csv, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        required = {"category_url", "subcategory_name", "subcategory_url"}
-        if not required.issubset(set(reader.fieldnames or [])):
-            raise RuntimeError(f"CSV має містити колонки: {sorted(required)}")
+    required = {"subcategory_name", "subcategory_url"}
+    if not required.issubset(set(reader.fieldnames or [])):
+        raise RuntimeError(f"CSV має містити колонки: {sorted(required)}")
 
         for i, row in enumerate(reader, start=1):
             if limit is not None and i > limit:
                 break
 
-            cat_url = (row.get("category_url") or "").strip()
+            cat_url = (row.get("category_url") or row.get("subcategory_url") or "").strip()
             sub_name = (row.get("subcategory_name") or "").strip()
             sub_url = (row.get("subcategory_url") or "").strip()
             if not sub_url:
