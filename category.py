@@ -29,6 +29,7 @@ def make_page(p, headless: bool, variant: str = "stealth") -> tuple:
       - "stealth": UA/headers/locale/tz + anti-webdriver
       - "headed": headless=False, але з тими ж налаштуваннями
     """
+    channel = "chrome"  # ← дуже часто стабілізує headless
     args = [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
@@ -38,7 +39,7 @@ def make_page(p, headless: bool, variant: str = "stealth") -> tuple:
     if variant == "headed":
         headless = False
 
-    browser = p.chromium.launch(headless=headless, args=args)
+    browser = p.chromium.launch(headless=headless, channel=channel, args=args)
 
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
