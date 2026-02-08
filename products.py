@@ -36,11 +36,7 @@ def make_page(p, headless: bool, variant: str = "stealth"):
         "--disable-dev-shm-usage",
     ]
 
-    browser = p.chromium.launch(
-        headless=headless,
-        channel="chrome",
-        args=args,
-    )
+    browser = p.chromium.launch(headless=headless, args=args)
 
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
