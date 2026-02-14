@@ -695,8 +695,8 @@ def run_full_pipeline(
 
 if __name__ == "__main__":
     run_full_pipeline(
-        limit_subcategories=None,
-        limit_parts_detail=None,
+        limit_subcategories=5,
+        limit_parts_detail=4,
         sniff_seconds=20,
         headless_subcategories=True,
         headless_products=True,

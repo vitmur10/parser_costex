@@ -16,6 +16,53 @@ from config import USER_AGENTS
 
 
 
+
+# =========================
+# Debug capture (AJAX dumps)
+# =========================
+
+def _safe_slug(s: str, max_len: int = 80) -> str:
+    s = (s or '').strip().lower()
+    s = re.sub(r"https?://", "", s)
+    s = re.sub(r"[^a-z0-9]+", "-", s)
+    s = s.strip("-") or "item"
+    return s[:max_len]
+
+def _make_ajax_dump_dir(url: str) -> Path:
+    """Create a unique folder for dumping captured admin-ajax payloads for a page."""
+    base = Path(os.getenv("AJAX_DUMP_DIR", "ajax_debug"))
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    d = base / f"{ts}__{_safe_slug(url)}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _dump_ajax_response(dump_dir: Path, idx: int, resp, body: str, limit: int = 120_000) -> None:
+    """Save one captured response (and basic request info) for later inspection."""
+    try:
+        req = resp.request
+        url = getattr(req, 'url', '') or ''
+        method = getattr(req, 'method', '') or ''
+        post_data = getattr(req, 'post_data', None)
+        status = getattr(resp, 'status', None)
+        # Save metadata
+        meta = {
+            "idx": idx,
+            "request_url": url,
+            "request_method": method,
+            "request_post_data": post_data,
+            "status": status,
+        }
+        (dump_dir / f"ajax_{idx:03d}_meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # Save body (trim to keep files manageable)
+        body_out = body if body is not None else ""
+        if limit and len(body_out) > limit:
+            body_out = body_out[:limit] + "\n\n[TRUNCATED]"
+        (dump_dir / f"ajax_{idx:03d}_body.txt").write_text(body_out, encoding="utf-8", errors="ignore")
+    except Exception:
+        # never break parsing because of debug dumping
+        return
+
 # =========================
 # Browser/context
 # =========================
@@ -234,6 +281,9 @@ def log_network(
     product_list: list[dict] = []
     responses = []
     debug_ajax = os.getenv("DEBUG_AJAX", "0") == "1"
+    save_ajax = os.getenv("SAVE_AJAX", "1") == "1"  # set to 0 to disable dumping
+    ajax_dump_dir: Path | None = None
+    dumped_any = False
 
     with sync_playwright() as p:
         browser, context, page = make_page(p, headless=headless, variant=variant)
@@ -267,16 +317,34 @@ def log_network(
                 dbg_dump(page, "stage3_no_ajax", out_dir="dbg")
                 return []
 
+            # ✅ опційно: збережемо усі зловлені admin-ajax відповіді для дебагу
+            #    (за замовчуванням увімкнено: SAVE_AJAX=1; щоб вимкнути: SAVE_AJAX=0)
+            if save_ajax and ajax_dump_dir is None:
+                ajax_dump_dir = _make_ajax_dump_dir(url)
+                # короткий список URL-ів, щоб швидко бачити "що саме ловимо"
+                try:
+                    (ajax_dump_dir / "captured_urls.txt").write_text(
+                        "\n".join([r.request.url for r in responses if getattr(r, "request", None)]),
+                        encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+
             # ✅ парсимо parts із всіх responses (беремо останні — вони актуальніші)
             all_parts: set[str] = set()
 
             # останні відповіді часто містять актуальні дані
-            for resp in responses[::-1]:
+            for idx_resp, resp in enumerate(responses[::-1], start=1):
                 try:
                     txt = resp.text()
                 except Exception:
                     continue
 
+
+                # 🔎 dump captured response payloads (so you can inspect what exactly was downloaded)
+                if ajax_dump_dir is not None:
+                    _dump_ajax_response(ajax_dump_dir, idx_resp, resp, txt)
+                    dumped_any = True
                 parts = extract_parts_from_any_payload(txt)
                 for pno in parts:
                     all_parts.add(pno)
@@ -286,6 +354,23 @@ def log_network(
                     break
 
             if not all_parts:
+                # Якщо SAVE_AJAX був вимкнений, але parts не знайшлись — все одно дампнемо останні відповіді для аналізу
+                if ajax_dump_dir is None:
+                    ajax_dump_dir = _make_ajax_dump_dir(url)
+                if not dumped_any:
+                    try:
+                        for idx_resp, resp in enumerate(responses[::-1][:20], start=1):
+                            try:
+                                txt = resp.text()
+                            except Exception:
+                                continue
+                            _dump_ajax_response(ajax_dump_dir, idx_resp, resp, txt)
+                        (ajax_dump_dir / "captured_urls.txt").write_text(
+                            "\n".join([r.request.url for r in responses if getattr(r, "request", None)]),
+                            encoding="utf-8"
+                        )
+                    except Exception:
+                        pass
                 print(f"[WARN] admin-ajax captured but no parts parsed: {url}")
                 dbg_dump(page, "stage3_ajax_no_parts", out_dir="dbg")
                 return []
@@ -398,7 +483,7 @@ def run_from_input_csv(
 
     with open(input_csv, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
-        required = {"category_url", "subcategory_name", "subcategory_url"}
+        required = {"subcategory_name", "subcategory_url"}
         if not required.issubset(set(reader.fieldnames or [])):
             raise RuntimeError(f"CSV має містити колонки: {sorted(required)}")
 
