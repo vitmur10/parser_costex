@@ -83,11 +83,7 @@ def make_page(p, headless: bool, variant: str = "stealth"):
         "--disable-dev-shm-usage",
     ]
 
-    browser = p.chromium.launch(
-        headless=headless,
-        channel="chrome",
-        args=args,
-    )
+    browser = p.chromium.launch(headless=headless, args=args)
 
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
@@ -491,7 +487,7 @@ def run_from_input_csv(
             if limit is not None and i > limit:
                 break
 
-            cat_url = (row.get("category_url") or "").strip()
+            cat_url = (row.get("category_url") or row.get("subcategory_url") or "").strip()
             sub_name = (row.get("subcategory_name") or "").strip()
             sub_url = (row.get("subcategory_url") or "").strip()
             if not sub_url:

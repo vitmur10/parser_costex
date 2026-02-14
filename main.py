@@ -460,7 +460,6 @@ def create_browser_and_page(p, variant: str, headless_default: bool) -> tuple:
 
     browser = p.chromium.launch(
         headless=headless,
-        channel="chrome",
         args=args,
         slow_mo=int(os.getenv("PW_SLOW_MO_MS", "0")),
     )
