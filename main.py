@@ -489,6 +489,77 @@ def create_browser_and_page(p, variant: str, headless_default: bool) -> tuple:
     return browser, context, page
 
 
+
+def _stage4_is_logged_out(page) -> bool:
+    """Heuristic: detect if we got redirected to login / challenge."""
+    try:
+        url = _safe_page_url(page) or ""
+        title = _safe_page_title(page) or ""
+    except Exception:
+        return False
+    if URL_LOGIN in url:
+        return True
+    if "ctp-online login" in (title or "").lower():
+        return True
+    if "just a moment" in (title or "").lower():
+        return True
+    return False
+
+
+def _stage4_recover_session(page, *, variant: str, out_dir: Path) -> bool:
+    """
+    Try to recover after a per-part failure WITHOUT closing browser / relogin from scratch.
+    Returns True if we believe we recovered and can continue, False otherwise.
+    """
+    try:
+        if _stage4_is_logged_out(page):
+            logger.warning("Stage4 recovery: looks logged out/challenged. re-login in same context. variant=%s", variant)
+            dbg_dump(page, f"stage4_recover_loggedout_{variant}", out_dir / "dbg")
+            # Go to login page and perform login again (same context/cookies)
+            try:
+                page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45000)
+            except Exception:
+                pass
+            try:
+                login(
+                    page,
+                    URL_LOGIN,
+                    username=CREDENTIALS["login"],
+                    password=CREDENTIALS["password"],
+                )
+            except TypeError:
+                login(page, URL_LOGIN)
+
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass
+
+            if not is_login_success(page):
+                logger.warning("Stage4 recovery: login still not confirmed. url=%s title=%r", _safe_page_url(page), _safe_page_title(page))
+                dbg_dump(page, f"stage4_recover_login_not_ok_{variant}", out_dir / "dbg")
+                return False
+
+        # Ensure we are on Price Inquiry page again
+        try:
+            go_to_price_inquiry(page)
+        except Exception as e:
+            logger.warning("Stage4 recovery: go_to_price_inquiry failed: %s", e)
+            dbg_dump(page, f"stage4_recover_go_to_inquiry_fail_{variant}", out_dir / "dbg")
+            return False
+
+        logger.info("Stage4 recovery: ok. url=%s title=%r", _safe_page_url(page), _safe_page_title(page))
+        return True
+    except Exception as e:
+        logger.warning("Stage4 recovery: unexpected error: %s", e)
+        try:
+            dbg_dump(page, f"stage4_recover_exc_{variant}", out_dir / "dbg")
+        except Exception:
+            pass
+        return False
+
+
+
 def run_stage4_with_variants(
     products_csv: Path,
     limit_parts_detail: int | None,
@@ -552,13 +623,31 @@ def run_stage4_with_variants(
 
                     logger.info("Detail [%s] variant=%s part_no=%s url=%s", idx, variant, part_no, _safe_page_url(page))
 
-                    fill_price_inquiry_form(page, part_number=part_no)
-                    logger.info("After fill form: url=%s", _safe_page_url(page))
+                    try:
+                        fill_price_inquiry_form(page, part_number=part_no)
+                        logger.info("After fill form: url=%s", _safe_page_url(page))
 
-                    price_data = open_detail_update_qty_and_collect(page)
-                    logger.info("After collect: url=%s", _safe_page_url(page))
+                        price_data = open_detail_update_qty_and_collect(page)
+                        logger.info("After collect: url=%s", _safe_page_url(page))
 
-                    new_rows = normalize_price_rows(item, price_data)
+                        new_rows = normalize_price_rows(item, price_data)
+
+                    except Exception as e_part:
+                        # ✅ Do NOT close browser / re-login from scratch for a single part.
+                        # Dump state and try to recover to Price Inquiry, then continue with next part.
+                        logger.exception(
+                            "Stage4 part failed variant=%s part_no=%s err=%s (url=%s title=%r)",
+                            variant, part_no, e_part, _safe_page_url(page), _safe_page_title(page)
+                        )
+                        if page is not None:
+                            dbg_dump(page, f"stage4_part_{variant}_{part_no}", out_dir / "dbg")
+
+                        recovered = _stage4_recover_session(page, variant=variant, out_dir=out_dir)
+                        if not recovered:
+                            # If we cannot recover, we abort this variant so the next variant can try.
+                            raise
+                        # Skip this part and move on
+                        continue
                     # Leiparts: get features by part_no and store into 'Features' column
                     if use_leiparts and lei_page is not None:
                         feat = features_cache.get(part_no)
