@@ -23,6 +23,7 @@ from deteil_product import (
     open_detail_update_qty_and_collect,
 )
 from products import run_from_input_csv
+from parser_features import leiparts_open_first_and_get_features
 from write import save_costex_results_xlsx, dedupe_results
 
 
@@ -518,6 +519,22 @@ def run_stage4_with_variants(
                     max_attempts=max_attempts,
                 )
 
+                # --- Leiparts features (optional) ---
+                use_leiparts = os.getenv("USE_LEIPARTS", "1").strip().lower() not in ("0", "false", "no")
+                lei_page = None
+                features_cache: dict[str, str] = {}
+                if use_leiparts:
+                    try:
+                        lei_page = context.new_page()
+                        lei_page.set_default_timeout(int(os.getenv("LEI_TIMEOUT_MS", "30000")))
+                        lei_page.set_default_navigation_timeout(int(os.getenv("LEI_NAV_TIMEOUT_MS", "45000")))
+                        logger.info("Leiparts enabled. Will enrich rows with Features.")
+                    except Exception as e:
+                        lei_page = None
+                        use_leiparts = False
+                        logger.warning("Leiparts disabled (cannot create page): %s", e)
+
+
                 logger.info("Go to Price Inquiry... current_url=%s", _safe_page_url(page))
                 go_to_price_inquiry(page)
                 logger.info("After go_to_price_inquiry: url=%s title=%r", _safe_page_url(page), _safe_page_title(page))
@@ -542,6 +559,19 @@ def run_stage4_with_variants(
                     logger.info("After collect: url=%s", _safe_page_url(page))
 
                     new_rows = normalize_price_rows(item, price_data)
+                    # Leiparts: get features by part_no and store into 'Features' column
+                    if use_leiparts and lei_page is not None:
+                        feat = features_cache.get(part_no)
+                        if feat is None:
+                            try:
+                                feat = leiparts_open_first_and_get_features(lei_page, part_no)
+                            except Exception as e:
+                                logger.warning("Leiparts features failed part_no=%s err=%s", part_no, e)
+                                feat = ""
+                            features_cache[part_no] = feat
+                        for _r in new_rows:
+                            _r["Features"] = feat
+
                     results.extend(new_rows)
 
                     # ✅ incremental save after each part
@@ -549,6 +579,12 @@ def run_stage4_with_variants(
                     processed.add(part_no)
 
                 try:
+                    try:
+                        if lei_page is not None:
+                            lei_page.close()
+                    except Exception:
+                        pass
+
                     browser.close()
                 except Exception:
                     pass

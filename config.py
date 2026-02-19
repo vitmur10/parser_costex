@@ -1,5 +1,6 @@
 BASE_URL = "https://costex.com/"
 URL_LOGIN = "https://www.costex.com/ctp-online-login/"
+URL_FEATURES = "https://leiparts.com/"
 SELECTOR = {
     "authorization":
         {
