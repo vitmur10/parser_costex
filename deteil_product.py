@@ -51,7 +51,12 @@ def accept_dialogs(page: Page):
 
 
 def dbg_state(page: Page, tag: str):
-    print(f"DEBUG[{tag}] url={page.url}")
+    # noisy per-click debug -> only when DEBUG=1
+    try:
+        debug(f"DEBUG[{tag}] url={page.url}")
+    except Exception:
+        pass
+
 
 
 

@@ -36,6 +36,15 @@ def setup_logging(
     log_file: str = "costex_parser.log",
     level: str | None = None,
 ) -> logging.Logger:
+    """Logger for the pipeline.
+
+    Console is "summary" by default (hides very chatty INFO + hides tracebacks).
+    Full logs (including tracebacks) go to file.
+
+    Env:
+      LOG_LEVEL=INFO|DEBUG|...
+      CONSOLE_MODE=summary|full
+    """
     lvl = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
     log_level = getattr(logging, lvl, logging.INFO)
 
@@ -49,18 +58,49 @@ def setup_logging(
     if logger.handlers:
         return logger
 
-    fmt = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    class _ConsoleSummaryFilter(logging.Filter):
+        """Hide very chatty INFO logs in console."""
+        _drop_re = re.compile(
+            r"^(NAV\[|LOAD\[|Detail \[|After fill form:|After collect:|Stage4 recovery: ok\.|Go to Price Inquiry\.|After go_to_price_inquiry:)"
+        )
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.levelno >= logging.WARNING:
+                return True
+            mode = os.getenv("CONSOLE_MODE", "summary").strip().lower()
+            if mode in ("full", "verbose"):
+                return True
+            msg = record.getMessage() or ""
+            return not bool(self._drop_re.match(msg))
+
+    class _ConsoleSummaryFormatter(logging.Formatter):
+        """In summary mode, do not print tracebacks (keep file log full)."""
+
+        def format(self, record: logging.LogRecord) -> str:
+            mode = os.getenv("CONSOLE_MODE", "summary").strip().lower()
+            if mode in ("summary", "quiet") and (record.exc_info or record.stack_info):
+                exc_info = record.exc_info
+                stack_info = record.stack_info
+                record.exc_info = None
+                record.stack_info = None
+                try:
+                    return super().format(record)
+                finally:
+                    record.exc_info = exc_info
+                    record.stack_info = stack_info
+            return super().format(record)
+
+    fmt_str = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    date_fmt = "%Y-%m-%d %H:%M:%S"
 
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(log_level)
-    ch.setFormatter(fmt)
+    ch.setFormatter(_ConsoleSummaryFormatter(fmt=fmt_str, datefmt=date_fmt))
+    ch.addFilter(_ConsoleSummaryFilter())
 
     fh = logging.FileHandler(file_path, encoding="utf-8")
     fh.setLevel(log_level)
-    fh.setFormatter(fmt)
+    fh.setFormatter(logging.Formatter(fmt=fmt_str, datefmt=date_fmt))
 
     logger.addHandler(ch)
     logger.addHandler(fh)
@@ -144,9 +184,9 @@ def _safe_page_title(page: Page | None) -> str:
 def attach_page_tracing(page: Page, variant: str):
     """
     Логуємо реальні переходи/URL щоб не гадати де ми.
-    Вмикається завжди (легке), але можна вимкнути env TRACE_NAV=0
+    Вимкнено за замовчуванням. Увімкнути: env TRACE_NAV=1
     """
-    if os.getenv("TRACE_NAV", "1").strip() in ("0", "false", "False"):
+    if os.getenv("TRACE_NAV", "0").strip() in ("0", "false", "False"):
         return
 
     def on_framenavigated(frame):
@@ -819,9 +859,9 @@ def run_full_pipeline(
 
 if __name__ == "__main__":
     run_full_pipeline(
-        limit_subcategories=5,
-        limit_parts_detail=20,
-        sniff_seconds=20,
+        limit_subcategories=None,
+        limit_parts_detail=None,
+        sniff_seconds=25,
         headless_subcategories=True,
         headless_products=True,
         headless_detail=True,
