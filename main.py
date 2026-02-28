@@ -21,6 +21,7 @@ from deteil_product import (
     go_to_price_inquiry,
     fill_price_inquiry_form,
     open_detail_update_qty_and_collect,
+    DetailViewQtyInputError,
 )
 from products import run_from_input_csv
 from parser_features import leiparts_open_first_and_get_features
@@ -157,6 +158,16 @@ def _jsonl_processed_partnos(path: Path) -> set[str]:
         if p:
             done.add(p)
     return done
+
+def _jsonl_blacklisted_partnos(path: Path) -> set[str]:
+    """Persistent blacklist: part_no values to skip on next runs."""
+    bl: set[str] = set()
+    for r in _jsonl_load(path):
+        p = str(r.get("part_no") or "").strip()
+        if p:
+            bl.add(p)
+    return bl
+
 
 
 # =========================
@@ -654,8 +665,18 @@ def run_stage4_with_variants(
                 if processed:
                     logger.info("Stage 4 resume enabled. already_processed_parts=%s", len(processed))
 
+
+                blacklist_path = out_dir / "blacklist_partnos.jsonl"
+                blacklisted = _jsonl_blacklisted_partnos(blacklist_path)
+                if blacklisted:
+                    logger.info("Blacklist enabled. blacklisted_parts=%s file=%s", len(blacklisted), str(blacklist_path))
+
                 for idx, item in enumerate(iter_parts_from_csv(str(products_csv), limit=limit_parts_detail), start=1):
                     part_no = item["part_no"]
+
+                    if part_no in blacklisted:
+                        logger.info("Skip blacklisted part_no=%s", part_no)
+                        continue
 
                     if resume and part_no in processed:
                         logger.info("Skip already processed part_no=%s", part_no)
@@ -671,6 +692,37 @@ def run_stage4_with_variants(
                         logger.info("After collect: url=%s", _safe_page_url(page))
 
                         new_rows = normalize_price_rows(item, price_data)
+
+                    except DetailViewQtyInputError as e_part:
+                        # Add part to persistent blacklist and continue
+                        try:
+                            _jsonl_append(
+                                blacklist_path,
+                                [{
+                                    "ts": datetime.now().isoformat(timespec="seconds"),
+                                    "part_no": part_no,
+                                    "variant": variant,
+                                    "reason": str(e_part),
+                                    "url": _safe_page_url(page),
+                                    "title": _safe_page_title(page),
+                                }],
+                            )
+                            blacklisted.add(part_no)
+                            logger.warning("Added to blacklist part_no=%s reason=%s", part_no, e_part)
+                        except Exception:
+                            logger.warning("Failed to write blacklist for part_no=%s", part_no)
+
+                        logger.exception(
+                            "Stage4 part failed (blacklisted) variant=%s part_no=%s err=%s (url=%s title=%r)",
+                            variant, part_no, e_part, _safe_page_url(page), _safe_page_title(page)
+                        )
+                        if page is not None:
+                            dbg_dump(page, f"stage4_part_{variant}_{part_no}", out_dir / "dbg")
+
+                        recovered = _stage4_recover_session(page, variant=variant, out_dir=out_dir)
+                        if not recovered:
+                            raise
+                        continue
 
                     except Exception as e_part:
                         # ✅ Do NOT close browser / re-login from scratch for a single part.
@@ -859,8 +911,8 @@ def run_full_pipeline(
 
 if __name__ == "__main__":
     run_full_pipeline(
-        limit_subcategories=None,
-        limit_parts_detail=None,
+        limit_subcategories=2,
+        limit_parts_detail=10,
         sniff_seconds=25,
         headless_subcategories=True,
         headless_products=True,

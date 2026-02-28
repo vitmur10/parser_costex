@@ -7,6 +7,12 @@ from datetime import datetime
 from pathlib import Path
 
 
+class DetailViewQtyInputError(RuntimeError):
+    """Raised when detailView() finishes but neither modal nor qty input appears."""
+    pass
+
+
+
 # =========================
 # Helpers
 # =========================
@@ -674,7 +680,7 @@ def open_detail_update_qty_and_collect(page: Page):
         wait_detail_or_modal(page, timeout_ms=15000)
     except Exception:
         dbg_dump(page, "after_detailView_no_state")
-        raise RuntimeError(f"❌ After detailView: neither modal nor qty input. url={page.url}")
+        raise DetailViewQtyInputError(f"❌ After detailView: neither modal nor qty input. url={page.url}")
 
     # -------------------------
     # 2) If modal -> parse it

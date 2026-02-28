@@ -16,7 +16,7 @@ def leiparts_extract_features_line(page: Page) -> str:
     """
     Extracts Data sheet features from product page and returns
     a single line like:
-    "Voltage: 24V; Rotation: CW; Refrigerant: R134a"
+    "Voltage:24V|Rotation:CW|Refrigerant:R134a"
     """
     features = []
 
@@ -44,11 +44,11 @@ def leiparts_extract_features_line(page: Page) -> str:
             val = " ".join(val.split())
 
             if key and val:
-                features.append(f"{key}: {val}")
+                features.append(f"{key}:{val}")
         except Exception as e:
             _lei_log(f"[LEI] feature parse error index={i} err={e}")
 
-    features_line = "; ".join(features)
+    features_line = "|".join(features)
     _lei_log(f"[LEI] features_line = {features_line}")
     return features_line
 
