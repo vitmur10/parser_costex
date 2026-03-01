@@ -44,7 +44,16 @@ def leiparts_extract_features_line(page: Page) -> str:
             val = " ".join(val.split())
 
             if key and val:
-                features.append(f"{key}:{val}")
+                # If value is a comma-separated list (e.g., Application), split into multiple entries
+                if ',' in val:
+                    parts = [p.strip() for p in val.split(',') if p.strip()]
+                    if len(parts) > 1:
+                        for p in parts:
+                            features.append(f"{key}:{p}")
+                    else:
+                        features.append(f"{key}:{val}")
+                else:
+                    features.append(f"{key}:{val}")
         except Exception as e:
             _lei_log(f"[LEI] feature parse error index={i} err={e}")
 

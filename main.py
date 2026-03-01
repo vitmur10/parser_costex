@@ -912,7 +912,7 @@ def run_full_pipeline(
 if __name__ == "__main__":
     run_full_pipeline(
         limit_subcategories=2,
-        limit_parts_detail=10,
+        limit_parts_detail=5,
         sniff_seconds=25,
         headless_subcategories=True,
         headless_products=True,
