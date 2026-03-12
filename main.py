@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import concurrent.futures
 from debug_utils import dbg_dump, debug
 from playwright.sync_api import sync_playwright, Page
 
@@ -877,6 +878,52 @@ def run_full_pipeline(
 
     logger.info("Stage 4: detail parsing variants=%s limit_parts=%s", variants, limit_parts_detail)
 
+    def _split_csv_evenly(file_path: Path, parts: int) -> list[Path]:
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as f_in:
+            reader = csv.DictReader(f_in)
+            rows = list(reader)
+            fieldnames = reader.fieldnames or []
+
+        out_paths: list[Path] = []
+        chunks: list[list[dict[str, Any]]] = [[] for _ in range(parts)]
+        for idx, row in enumerate(rows):
+            chunks[idx % parts].append(row)
+
+        for idx, rows_chunk in enumerate(chunks, start=1):
+            out_path = file_path.parent / f"{file_path.stem}_part{idx}{file_path.suffix}"
+            with open(out_path, "w", encoding="utf-8-sig", newline="") as f_out:
+                writer = csv.DictWriter(f_out, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows_chunk)
+            out_paths.append(out_path)
+
+        return out_paths
+
+    def _run_stage4_worker(worker_id: int, csv_path: Path) -> list[dict[str, Any]]:
+        worker_out = OUT_DIR / f"stage4_worker_{worker_id}"
+        worker_out.mkdir(parents=True, exist_ok=True)
+
+        for stale_name in ("stage4_partial.jsonl", "blacklist_partnos.jsonl"):
+            try:
+                (worker_out / stale_name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return run_stage4_with_variants(
+            products_csv=csv_path,
+            limit_parts_detail=limit_parts_detail,
+            out_dir=worker_out,
+            headless_default=headless_detail,
+            variants=variants,
+        )
+
+    try:
+        stage4_threads = int(os.getenv("STAGE4_THREADS", "1"))
+    except Exception:
+        stage4_threads = 1
+    if stage4_threads < 1:
+        stage4_threads = 1
+
     # Якщо хочеш стартувати Stage 4 з нуля (не резюмити), постав:
     #   RESUME_STAGE4=0  або  CLEAR_STAGE4=1
     partial_path = OUT_DIR / "stage4_partial.jsonl"
@@ -893,13 +940,34 @@ def run_full_pipeline(
         except Exception:
             pass
 
-    results = run_stage4_with_variants(
-        products_csv=products_csv,
-        limit_parts_detail=limit_parts_detail,
-        out_dir=OUT_DIR,
-        headless_default=headless_detail,
-        variants=variants,
-    )
+    if stage4_threads == 1:
+        results = run_stage4_with_variants(
+            products_csv=products_csv,
+            limit_parts_detail=limit_parts_detail,
+            out_dir=OUT_DIR,
+            headless_default=headless_detail,
+            variants=variants,
+        )
+    else:
+        logger.info("Stage 4 parallel mode enabled. threads=%s", stage4_threads)
+        part_files = _split_csv_evenly(products_csv, stage4_threads)
+        results = []
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=stage4_threads) as executor:
+                futures = [
+                    executor.submit(_run_stage4_worker, idx, csv_path)
+                    for idx, csv_path in enumerate(part_files, start=1)
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    worker_rows = future.result()
+                    if worker_rows:
+                        results.extend(worker_rows)
+        finally:
+            for part_file in part_files:
+                try:
+                    part_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     logger.info("Dedupe results...")
     results = dedupe_results(results)
