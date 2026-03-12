@@ -15,7 +15,7 @@ from debug_utils import dbg_dump, debug
 from playwright.sync_api import sync_playwright, Page
 
 import category as cat
-from config import URL_LOGIN, USER_AGENTS, CREDENTIALS
+from config import URL_LOGIN, USER_AGENTS, CREDENTIALS, get_playwright_proxy
 from authorization import login
 from deteil_product import (
     go_to_price_inquiry,
@@ -510,10 +510,12 @@ def create_browser_and_page(p, variant: str, headless_default: bool) -> tuple:
     if variant == "headed":
         headless = False
 
+    proxy = get_playwright_proxy()
+
     browser = p.chromium.launch(
         headless=headless,
         args=args,
-        slow_mo=int(os.getenv("PW_SLOW_MO_MS", "0")),
+        proxy=get_playwright_proxy()
     )
 
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
@@ -913,7 +915,7 @@ if __name__ == "__main__":
     run_full_pipeline(
         limit_subcategories=None,
         limit_parts_detail=None,
-        sniff_seconds=25,
+        sniff_seconds=20,
         headless_subcategories=True,
         headless_products=True,
         headless_detail=True,

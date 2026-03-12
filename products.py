@@ -12,8 +12,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright, Page
 
-from config import USER_AGENTS
-
+from config import USER_AGENTS, get_playwright_proxy
 
 
 
@@ -83,8 +82,11 @@ def make_page(p, headless: bool, variant: str = "stealth"):
         "--disable-dev-shm-usage",
     ]
 
-    browser = p.chromium.launch(headless=headless, args=args)
-
+    browser = p.chromium.launch(
+        headless=headless,
+        args=args,
+        proxy=get_playwright_proxy()
+    )
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
     if variant == "basic":

@@ -9,8 +9,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright, Page
 
-from config import BASE_URL, USER_AGENTS
-
+from config import BASE_URL, USER_AGENTS, get_playwright_proxy
 
 # =========================
 # Utils
@@ -39,8 +38,11 @@ def make_page(p, headless: bool, variant: str = "stealth") -> tuple:
     if variant == "headed":
         headless = False
 
-    browser = p.chromium.launch(headless=headless, channel=channel, args=args)
-
+    browser = p.chromium.launch(
+        headless=headless,
+        args=args,
+        proxy=get_playwright_proxy()
+    )
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
     context = browser.new_context(

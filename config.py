@@ -1,15 +1,20 @@
+import os
+import random
+from dotenv import load_dotenv
+
+load_dotenv()
+
 BASE_URL = "https://costex.com/"
 URL_LOGIN = "https://www.costex.com/ctp-online-login/"
 URL_FEATURES = "https://leiparts.com/"
-SELECTOR = {
-    "authorization":
-        {
-            "button_login": "span.elementor-button-text",
-            "window_login": "elementor-widget-wrap",
-            "selector_login": "TxtRUSERNAME",
-            "selector_password": "PwdRPASSWORD",
 
-        },
+SELECTOR = {
+    "authorization": {
+        "button_login": "span.elementor-button-text",
+        "window_login": "elementor-widget-wrap",
+        "selector_login": "TxtRUSERNAME",
+        "selector_password": "PwdRPASSWORD",
+    },
     "part_no": "",
     "title": "",
     "requested_qty": 9999,
@@ -32,9 +37,10 @@ SELECTOR = {
     "subcategory": "elementor-element-78687bb",
     "products_table": "wdt-skin-light"
 }
+
 CREDENTIALS = {
-    "password": "ANNA83",
-    "login": "U68905"
+    "login": os.getenv("COSTEX_LOGIN"),
+    "password": os.getenv("COSTEX_PASSWORD"),
 }
 
 USER_AGENTS = [
@@ -43,19 +49,16 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
@@ -63,4 +66,32 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
 ]
 
-DEBUG = False
+DEBUG = os.getenv("DEBUG", "False").lower() == "true"
+
+# ===== PROXY =====
+
+PROXY_ENABLED = os.getenv("PROXY_ENABLED", "0") == "1"
+
+PROXY_HOST = os.getenv("PROXY_HOST", "dc.decodo.com")
+
+PROXY_PORTS = [
+    10001,10002,10003,10004,10005,
+    10006,10007,10008,10009,10010
+]
+
+PROXY_USERNAME = os.getenv("PROXY_USERNAME")
+PROXY_PASSWORD = os.getenv("PROXY_PASSWORD")
+
+
+def get_playwright_proxy():
+
+    if not PROXY_ENABLED:
+        return None
+
+    port = random.choice(PROXY_PORTS)
+
+    return {
+        "server": f"http://{PROXY_HOST}:{port}",
+        "username": PROXY_USERNAME,
+        "password": PROXY_PASSWORD,
+    }
