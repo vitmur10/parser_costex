@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Costex Parser Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f7f6; color: #333; max-width: 800px; margin: 40px auto; padding: 20px; }
+        .card { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #2c3e50; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 25px; }
+        .info-box { background: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #007bff; }
+
+        .status-running { color: #d35400; font-weight: bold; }
+        .status-idle { color: #27ae60; font-weight: bold; }
+
+        .btn { padding: 12px 24px; cursor: pointer; border-radius: 6px; border: none; font-size: 16px; font-weight: bold; transition: opacity 0.2s; margin-right: 10px; margin-bottom: 10px; }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { background: #bdc3c7; cursor: not-allowed; opacity: 1; }
+
+        .btn-run { background: #27ae60; color: white; }
+        .btn-stop { background: #e74c3c; color: white; }
+        .btn-dl { background: #2980b9; color: white; text-decoration: none; display: inline-block; }
+
+        .console { background: #1e1e1e; color: #00ff00; font-family: 'Courier New', Courier, monospace; font-size: 13px; padding: 15px; border-radius: 8px; height: 300px; overflow-y: auto; white-space: pre-wrap; margin-top: 20px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <h1>⚙️ Costex Parser Dashboard</h1>
+
+        <div class="info-grid">
+            <div class="info-box">
+                <strong>Status:</strong> <span id="is_running">Loading...</span><br>
+                <strong>Result:</strong> <span id="result">--</span>
+            </div>
+            <div class="info-box" style="border-left-color: #e67e22;">
+                <strong>Last Run:</strong> <br><span id="last_run">--</span>
+            </div>
+        </div>
+
+        <div>
+            <button id="runBtn" class="btn btn-run" onclick="action('run')">▶ Run Now</button>
+            <button id="stopBtn" class="btn btn-stop" onclick="action('stop')" disabled>⏹ Terminate</button>
+            <a href="/download" class="btn btn-dl" target="_blank">📥 Download Latest XLSX</a>
+        </div>
+
+        <h3 style="margin-top: 30px; margin-bottom: 10px; color: #2c3e50;">Live Logs</h3>
+        <div id="logBox" class="console">Loading logs...</div>
+    </div>
+
+    <script>
+        const logBox = document.getElementById('logBox');
+        let isScrolledToBottom = true;
+
+        // Перевіряємо, чи користувач прокрутив логи вгору
+        logBox.addEventListener('scroll', () => {
+            isScrolledToBottom = logBox.scrollHeight - logBox.clientHeight <= logBox.scrollTop + 5;
+        });
+
+        function updateUI() {
+            // Оновлюємо статус
+            fetch('/api/status').then(r => r.json()).then(data => {
+                const statusEl = document.getElementById('is_running');
+                statusEl.innerText = data.is_running ? "Running..." : "Idle";
+                statusEl.className = data.is_running ? "status-running" : "status-idle";
+
+                document.getElementById('last_run').innerText = data.last_run;
+                document.getElementById('result').innerText = data.result;
+
+                document.getElementById('runBtn').disabled = data.is_running;
+                document.getElementById('stopBtn').disabled = !data.is_running;
+            });
+
+            // Оновлюємо логи
+            fetch('/api/logs').then(r => r.json()).then(data => {
+                logBox.innerText = data.logs;
+                if (isScrolledToBottom) {
+                    logBox.scrollTop = logBox.scrollHeight;
+                }
+            });
+        }
+
+        function action(type) {
+            fetch(`/api/${type}`, { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    console.log(data);
+                    updateUI(); // Одразу оновлюємо UI після кліку
+                });
+        }
+
+        // Оновлювати кожні 2 секунди
+        setInterval(updateUI, 2000);
+        updateUI(); // Перший виклик при завантаженні
+    </script>
+</body>
+</html>

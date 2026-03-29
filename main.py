@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 import concurrent.futures
+
 from debug_utils import dbg_dump, debug
 from playwright.sync_api import sync_playwright, Page
 
@@ -128,7 +129,6 @@ def _jsonl_append(path: Path, rows: list[dict[str, Any]]) -> None:
             try:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
             except Exception:
-                # as a fallback, stringify everything
                 safe = {k: str(v) for k, v in (r or {}).items()}
                 f.write(json.dumps(safe, ensure_ascii=False) + "\n")
 
@@ -160,6 +160,7 @@ def _jsonl_processed_partnos(path: Path) -> set[str]:
             done.add(p)
     return done
 
+
 def _jsonl_blacklisted_partnos(path: Path) -> set[str]:
     """Persistent blacklist: part_no values to skip on next runs."""
     bl: set[str] = set()
@@ -168,7 +169,6 @@ def _jsonl_blacklisted_partnos(path: Path) -> set[str]:
         if p:
             bl.add(p)
     return bl
-
 
 
 # =========================
@@ -226,10 +226,6 @@ def attach_page_tracing(page: Page, variant: str):
             except Exception:
                 pass
         page.on("response", on_response)
-
-
-
-
 
 
 # =========================
@@ -430,9 +426,6 @@ def login_with_retries(
             browser, context, page = create_browser_and_page(p, variant, headless_default)
 
             logger.info("Login... (target=%s)", URL_LOGIN)
-            # authorization.login може мати різний підпис залежно від твоєї версії файлу:
-            #   login(page, url)
-            #   login(page, url, username, password) або з keyword args
             try:
                 login(
                     page,
@@ -441,7 +434,6 @@ def login_with_retries(
                     password=CREDENTIALS["password"],
                 )
             except TypeError:
-                # fallback: старий підпис без username/password
                 login(page, URL_LOGIN)
 
             try:
@@ -511,8 +503,6 @@ def create_browser_and_page(p, variant: str, headless_default: bool) -> tuple:
     if variant == "headed":
         headless = False
 
-    proxy = get_playwright_proxy()
-
     browser = p.chromium.launch(
         headless=headless,
         args=args,
@@ -543,7 +533,6 @@ def create_browser_and_page(p, variant: str, headless_default: bool) -> tuple:
     return browser, context, page
 
 
-
 def _stage4_is_logged_out(page) -> bool:
     """Heuristic: detect if we got redirected to login / challenge."""
     try:
@@ -569,7 +558,6 @@ def _stage4_recover_session(page, *, variant: str, out_dir: Path) -> bool:
         if _stage4_is_logged_out(page):
             logger.warning("Stage4 recovery: looks logged out/challenged. re-login in same context. variant=%s", variant)
             dbg_dump(page, f"stage4_recover_loggedout_{variant}", out_dir / "dbg")
-            # Go to login page and perform login again (same context/cookies)
             try:
                 page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45000)
             except Exception:
@@ -594,7 +582,6 @@ def _stage4_recover_session(page, *, variant: str, out_dir: Path) -> bool:
                 dbg_dump(page, f"stage4_recover_login_not_ok_{variant}", out_dir / "dbg")
                 return False
 
-        # Ensure we are on Price Inquiry page again
         try:
             go_to_price_inquiry(page)
         except Exception as e:
@@ -613,7 +600,6 @@ def _stage4_recover_session(page, *, variant: str, out_dir: Path) -> bool:
         return False
 
 
-
 def run_stage4_with_variants(
     products_csv: Path,
     limit_parts_detail: int | None,
@@ -623,19 +609,18 @@ def run_stage4_with_variants(
 ) -> list[dict[str, Any]]:
     last_err = None
 
-    # incremental file (so we don't lose progress if the run crashes)
     partial_path = out_dir / "stage4_partial.jsonl"
     resume = os.getenv("RESUME_STAGE4", "1").strip().lower() not in ("0", "false", "no")
 
     for variant in variants:
         logger.info("Stage 4 attempt: variant=%s headless_default=%s", variant, headless_default)
-        results: list[dict[str, Any]] = []  # still kept for final return, but we also write to JSONL
+        results: list[dict[str, Any]] = []
 
         with sync_playwright() as p:
             browser = None
             page = None
             try:
-                max_attempts = int(os.getenv("LOGIN_MAX_ATTEMPTS", "0"))  # 0 => без ліміту
+                max_attempts = int(os.getenv("LOGIN_MAX_ATTEMPTS", "0"))
                 browser, context, page = login_with_retries(
                     p,
                     variant=variant,
@@ -644,7 +629,6 @@ def run_stage4_with_variants(
                     max_attempts=max_attempts,
                 )
 
-                # --- Leiparts features (optional) ---
                 use_leiparts = os.getenv("USE_LEIPARTS", "1").strip().lower() not in ("0", "false", "no")
                 lei_page = None
                 features_cache: dict[str, str] = {}
@@ -659,7 +643,6 @@ def run_stage4_with_variants(
                         use_leiparts = False
                         logger.warning("Leiparts disabled (cannot create page): %s", e)
 
-
                 logger.info("Go to Price Inquiry... current_url=%s", _safe_page_url(page))
                 go_to_price_inquiry(page)
                 logger.info("After go_to_price_inquiry: url=%s title=%r", _safe_page_url(page), _safe_page_title(page))
@@ -667,7 +650,6 @@ def run_stage4_with_variants(
                 processed = _jsonl_processed_partnos(partial_path) if resume else set()
                 if processed:
                     logger.info("Stage 4 resume enabled. already_processed_parts=%s", len(processed))
-
 
                 blacklist_path = out_dir / "blacklist_partnos.jsonl"
                 blacklisted = _jsonl_blacklisted_partnos(blacklist_path)
@@ -697,7 +679,6 @@ def run_stage4_with_variants(
                         new_rows = normalize_price_rows(item, price_data)
 
                     except DetailViewQtyInputError as e_part:
-                        # Add part to persistent blacklist and continue
                         try:
                             _jsonl_append(
                                 blacklist_path,
@@ -728,8 +709,6 @@ def run_stage4_with_variants(
                         continue
 
                     except Exception as e_part:
-                        # ✅ Do NOT close browser / re-login from scratch for a single part.
-                        # Dump state and try to recover to Price Inquiry, then continue with next part.
                         logger.exception(
                             "Stage4 part failed variant=%s part_no=%s err=%s (url=%s title=%r)",
                             variant, part_no, e_part, _safe_page_url(page), _safe_page_title(page)
@@ -739,11 +718,9 @@ def run_stage4_with_variants(
 
                         recovered = _stage4_recover_session(page, variant=variant, out_dir=out_dir)
                         if not recovered:
-                            # If we cannot recover, we abort this variant so the next variant can try.
                             raise
-                        # Skip this part and move on
                         continue
-                    # Leiparts: get features by part_no and store into 'Features' column
+
                     if use_leiparts and lei_page is not None:
                         feat = features_cache.get(part_no)
                         if feat is None:
@@ -757,8 +734,6 @@ def run_stage4_with_variants(
                             _r["Features"] = feat
 
                     results.extend(new_rows)
-
-                    # ✅ incremental save after each part
                     _jsonl_append(partial_path, new_rows)
                     processed.add(part_no)
 
@@ -773,7 +748,6 @@ def run_stage4_with_variants(
                 except Exception:
                     pass
 
-                # Prefer JSONL as the source of truth (includes everything saved incrementally)
                 all_rows = _jsonl_load(partial_path)
                 logger.info("Stage 4 success: variant=%s rows_in_memory=%s rows_in_jsonl=%s", variant, len(results), len(all_rows))
                 return all_rows or results
@@ -826,12 +800,22 @@ def run_full_pipeline(
 
     logger.info("Pipeline start. out_dir=%s", str(OUT_DIR))
 
-    _run_parser_subcategory(subcategories_csv=str(subcategories_csv), headless=headless_subcategories)
-
+    reuse_subcategories = os.getenv("REUSE_SUBCATEGORIES", "1").strip().lower() not in ("0", "false", "no")
     sub_rows = _count_rows(subcategories_csv)
-    if sub_rows == 0:
-        raise RuntimeError(f"Stage 2 produced 0 subcategories. File={subcategories_csv.resolve()}")
-    logger.info("Stage 2 validated. subcategories_rows=%s", sub_rows)
+
+    if reuse_subcategories and subcategories_csv.exists() and sub_rows > 0:
+        logger.info(
+            "Stage 2 skipped: using existing subcategories file=%s rows=%s",
+            str(subcategories_csv),
+            sub_rows,
+        )
+    else:
+        _run_parser_subcategory(subcategories_csv=str(subcategories_csv), headless=headless_subcategories)
+
+        sub_rows = _count_rows(subcategories_csv)
+        if sub_rows == 0:
+            raise RuntimeError(f"Stage 2 produced 0 subcategories. File={subcategories_csv.resolve()}")
+        logger.info("Stage 2 validated. subcategories_rows=%s", sub_rows)
 
     if limit_subcategories is not None:
         logger.info("Trim subcategories to limit=%s", limit_subcategories)
@@ -924,8 +908,6 @@ def run_full_pipeline(
     if stage4_threads < 1:
         stage4_threads = 1
 
-    # Якщо хочеш стартувати Stage 4 з нуля (не резюмити), постав:
-    #   RESUME_STAGE4=0  або  CLEAR_STAGE4=1
     partial_path = OUT_DIR / "stage4_partial.jsonl"
     if os.getenv("CLEAR_STAGE4", "0").strip().lower() in ("1", "true", "yes"):
         try:
@@ -981,9 +963,9 @@ def run_full_pipeline(
 
 if __name__ == "__main__":
     run_full_pipeline(
-        limit_subcategories=None,
-        limit_parts_detail=None,
-        sniff_seconds=20,
+        limit_subcategories=5,
+        limit_parts_detail=100,
+        sniff_seconds=25,
         headless_subcategories=True,
         headless_products=True,
         headless_detail=True,
