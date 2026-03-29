@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, send_file, jsonify
-
+import sys
 app = Flask(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,7 +28,7 @@ def run_parser_task():
     try:
         # Використовуємо Popen, щоб мати змогу зупинити процес
         parser_process = subprocess.Popen(
-            ["python", "main.py"],
+            [sys.executable, "main.py"],
             cwd=str(BASE_DIR)
         )
 

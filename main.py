@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import csv
 import json
 import logging
@@ -966,8 +965,8 @@ if __name__ == "__main__":
         limit_subcategories=5,
         limit_parts_detail=100,
         sniff_seconds=25,
-        headless_subcategories=True,
-        headless_products=True,
-        headless_detail=True,
+        headless_subcategories=False,
+        headless_products=False,
+        headless_detail=False,
         out_dir=".",
     )
