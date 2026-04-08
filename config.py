@@ -67,31 +67,3 @@ USER_AGENTS = [
 ]
 
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
-
-# ===== PROXY =====
-
-PROXY_ENABLED = os.getenv("PROXY_ENABLED", "0") == "1"
-
-PROXY_HOST = os.getenv("PROXY_HOST", "dc.decodo.com")
-
-PROXY_PORTS = [
-    10001,10002,10003,10004,10005,
-    10006,10007,10008,10009,10010
-]
-
-PROXY_USERNAME = os.getenv("PROXY_USERNAME")
-PROXY_PASSWORD = os.getenv("PROXY_PASSWORD")
-
-
-def get_playwright_proxy():
-
-    if not PROXY_ENABLED:
-        return None
-
-    port = random.choice(PROXY_PORTS)
-
-    return {
-        "server": f"http://{PROXY_HOST}:{port}",
-        "username": PROXY_USERNAME,
-        "password": PROXY_PASSWORD,
-    }

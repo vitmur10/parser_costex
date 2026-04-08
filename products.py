@@ -12,7 +12,7 @@ from typing import Any
 
 from playwright.sync_api import sync_playwright, Page
 
-from config import USER_AGENTS, get_playwright_proxy
+from config import USER_AGENTS
 
 
 
@@ -85,7 +85,6 @@ def make_page(p, headless: bool, variant: str = "stealth"):
     browser = p.chromium.launch(
         headless=headless,
         args=args,
-        proxy=get_playwright_proxy()
     )
     ua = random.choice(USER_AGENTS) if USER_AGENTS else None
 
@@ -346,10 +345,6 @@ def log_network(
                 parts = extract_parts_from_any_payload(txt)
                 for pno in parts:
                     all_parts.add(pno)
-
-                # якщо вже багато — можна зупинитись
-                if len(all_parts) >= 50:
-                    break
 
             if not all_parts:
                 # Якщо SAVE_AJAX був вимкнений, але parts не знайшлись — все одно дампнемо останні відповіді для аналізу

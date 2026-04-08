@@ -16,7 +16,7 @@ from debug_utils import dbg_dump, debug
 from playwright.sync_api import sync_playwright, Page
 
 import category as cat
-from config import URL_LOGIN, USER_AGENTS, CREDENTIALS, get_playwright_proxy
+from config import URL_LOGIN, USER_AGENTS, CREDENTIALS
 from authorization import login
 from deteil_product import (
     go_to_price_inquiry,
@@ -962,7 +962,7 @@ def run_full_pipeline(
 
 if __name__ == "__main__":
     run_full_pipeline(
-        limit_subcategories=5,
+        limit_subcategories=None,
         limit_parts_detail=100,
         sniff_seconds=25,
         headless_subcategories=False,
